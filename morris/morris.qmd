@@ -1,0 +1,175 @@
+---
+title: "pyNET: Morris screening"
+editor: visual
+format: 
+  html:
+    toc: true
+    number-sections: true
+    code-fold: true
+knitr:
+  opts_chunk:
+    out.width: "100%"
+execute: 
+  cache: false
+  warning: false
+---
+
+```{r}
+library(tidyverse)
+library(data.table)
+library(ggrepel)
+library(ggpubr)
+
+ggplot <- function(...){
+  ggplot2::ggplot(...) + 
+        scale_color_viridis_d(end = 0.8) +
+        scale_fill_viridis_d(end = 0.8)
+}
+    
+theme_set(theme_bw())
+
+source("../data_preparation/helpers.R")
+
+```
+
+
+```{r}
+out_str = c("no_trees", "dbh_mean", "root_mean")
+out_net = c("fgraft", "no_groups", "gsm", "gsx")
+```
+
+# Input parameters
+
+```{r}
+params = fread("Transfer/param_values.txt")
+colnames(params) = c('f_radius',
+                     'salinity', 'amplitude', 'deviation',
+                     'f_growth',
+                     'k_die', 'recruits')
+```
+
+```{r}
+params %>% 
+   gather(., key, value, salinity:recruits) %>% 
+   ggplot(., aes(x = value)) +
+   geom_histogram(fill = "white", col = "black") +
+   facet_wrap(~key, scales = "free_x")
+```
+
+# Output: Morris
+
+```{r eval=F}
+fs = list.files("Results") %>% 
+    str_subset(pattern = "morris_")
+
+morris = data.frame()
+for (f in fs){
+  s = strsplit(strsplit(f, "[.]")[[1]][1], "_")[[1]]
+  h = fread(paste("Results", f, sep = "/")) %>% 
+    t(.) %>% data.frame(.)
+  h = h %>% 
+    mutate(params = c('f_radius', 'salinity', 'amplitude',
+                      'deviation', 'f_growth', 'k_die', 'recruits'),
+           ts = tail(s, 1),
+           output_var = ifelse(length(s) == 3, s[2],
+                               paste(s[2], s[3], 
+                                      sep = "_")))
+  
+  morris = rbind(morris, h)
+}
+
+
+colnames(morris) = c("mu", "mu_star", "sigma", "mu_star_conf",
+              "input_var", "ts", "output_var")
+fwrite(morris, "Results/morris.txt")
+```
+
+```{r}
+morris = fread("Results/morris.txt")
+
+morris_sum = morris %>% 
+  group_by(output_var, input_var) %>% 
+  reframe(mustar_m = mean(mu_star),
+          mustar_sd = sd(mu_star),
+          sigma_m = mean(sigma),
+          sigma_sd = sd(sigma)) %>% 
+  mutate(output_var = factor(output_var,
+                             levels = c(out_str, out_net)),
+         input_var = factor(input_var,
+                             levels = c('salinity', 'amplitude',
+                                        'deviation',
+                                        'f_radius',  'f_growth', 
+                                        'k_die', 'recruits')))
+```
+
+## Structural variables
+
+```{r}
+morris_sum %>% 
+  filter(output_var %in% out_str) %>%
+  ggplot(., aes(x = mustar_m, y = sigma_m, 
+                col = input_var,
+                shape = input_var)) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(xmin = mustar_m-mustar_sd,
+                    xmax = mustar_m+mustar_sd)) +
+  geom_errorbar(aes(ymin = sigma_m-sigma_sd,
+                    ymax = sigma_m+sigma_sd)) +
+    geom_text_repel(aes(label = input_var),
+                    # max.overlaps = 12, 
+                    show.legend = F) +
+    scale_shape_manual(values = c(1:7)) +
+  facet_wrap(~output_var, scales = "free", ncol = 4) +
+  labs(x = "\u03bc*",
+       y = "\u03c3",
+       col = "Input parameters",
+       shape = "Input parameters") +
+  theme(legend.position = "bottom")
+```
+
+```{r eval=F}
+ggsave("morris_struct.jpg",
+       width = 7, height = 4)
+```
+
+## Network variables
+
+
+```{r}
+morris_sum %>%
+    filter(output_var %in% out_net) %>%
+    mutate(output_var = factor(output_var,
+                               labels = c("fgraft", "gdens", "gsm", "gsx"))) %>%
+    ggplot(., aes(
+        x = mustar_m,
+        y = sigma_m,
+        col = input_var,
+        shape = input_var
+    )) +
+    geom_point(size = 3) +
+    geom_errorbar(aes(xmin = mustar_m - mustar_sd,
+                      xmax = mustar_m + mustar_sd)) +
+    geom_errorbar(aes(ymin = sigma_m - sigma_sd,
+                      ymax = sigma_m + sigma_sd)) +
+    geom_text_repel(
+        aes(label = input_var),
+        alpha = 0.5,
+        # max.overlaps = 12,
+        size = 3.,
+        show.legend = F
+    ) +
+    scale_shape_manual(values = c(7:14)) +
+    facet_wrap( ~ output_var, scales = "free", ncol = 4) +
+    labs(x = "\u03bc*",
+         y = "\u03c3",
+         col = "Input parameters",
+         shape = "Input parameters") +
+    theme(legend.position = "bottom")
+```
+
+
+```{r eval=F}
+ggsave("morris_netw.jpg",
+       width = 6.5, height = 3.5)
+```
+

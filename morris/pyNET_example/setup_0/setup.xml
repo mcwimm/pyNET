@@ -1,0 +1,87 @@
+<MangaProject>
+    <random_seed> 435345 </random_seed>
+    <resources>
+        <aboveground>
+            <type> AsymmetricZOI </type>
+                <domain>
+                    <x_1> 0 </x_1>
+                    <y_1> 0 </y_1>
+                    <x_2> 30 </x_2>
+                    <y_2> 30 </y_2>
+                    <x_resolution> 60 </x_resolution>
+                    <y_resolution> 60 </y_resolution>
+                </domain>
+            <allow_interpolation> True </allow_interpolation>
+        </aboveground>
+        <belowground>
+            <type> NetworkFixedSalinity </type>
+            <f_radius> 0.05 </f_radius>
+            <exchange> on </exchange>
+            <salinity> 0.056 0.056</salinity>
+            <min_x> 0 </min_x>
+            <max_x> 30 </max_x>
+            <sine> 
+                <amplitude> 0.015 </amplitude>
+                <stretch> 24*3600*58 </stretch>
+                <deviation> 0.001 </deviation>
+            </sine>   
+        </belowground>
+    </resources>
+    <population>
+        <group>
+            <name> Initial </name>
+            <species> ./Avicennia.py </species>
+            <vegetation_model_type> BettinaNetwork </vegetation_model_type>
+            <f_growth> 0.05 </f_growth>
+            <variant> v2 </variant>
+            <mortality> NoGrowth RandomGrowth </mortality>
+            <k_die> 2.0800000000000002e-13 </k_die>
+            <distribution>
+                <type> Random </type>
+                <n_recruitment_per_step> 18 </n_recruitment_per_step>
+                <n_individuals> 10 </n_individuals> 
+                <domain>
+                    <x_1> 0 </x_1>
+                    <y_1> 0 </y_1>
+                    <x_2> 30 </x_2>
+                    <y_2> 30 </y_2>
+                </domain>
+            </distribution>
+        </group>
+    </population>
+    <time_loop>
+        <type> Simple </type>
+        <t_start> 0 </t_start>
+        <t_end> 18934560000 </t_end> <!-- 600 years -->
+        <delta_t> 2629800 </delta_t> <!-- 1 month -->
+        <!--terminal_print>years</terminal_print-->
+    </time_loop>
+    <visualization>
+        <type> NONE </type>
+    </visualization>
+    <output>
+        <type> OneFile </type>
+        <output_times> [12623040000, 15778800000, 18934560000] </output_times >
+        <allow_previous_output>True</allow_previous_output>
+        <output_dir>setup_0</output_dir>
+        <geometry_output> r_stem </geometry_output>
+        <geometry_output> h_stem </geometry_output>
+        <geometry_output> r_crown </geometry_output>
+        <geometry_output> r_root </geometry_output>
+        <growth_output> ag_factor </growth_output>
+        <growth_output> bg_factor </growth_output>
+        <growth_output> age </growth_output>
+        <growth_output> weight_girthgrowth </growth_output>
+        <growth_output> weight_rootgrowth </growth_output>
+        <network_output> partner </network_output>
+        <network_output> potential_partner </network_output>
+        <network_output> groupID  </network_output>     
+        <network_output> node_degree </network_output>      
+        <network_output> water_available </network_output>
+        <network_output> water_absorbed </network_output>
+        <network_output> water_exchanged </network_output>
+        <network_output> psi_osmo  </network_output>
+        <network_output> weight_gr  </network_output>
+        <network_output> r_gr_rgf  </network_output>
+    </output>
+</MangaProject>

@@ -1,0 +1,104 @@
+---
+title: "pyNET: Variable importance – Research question 2: Which factors determine the network structure?"
+editor: visual
+format: 
+  html:
+    toc: true
+    number-sections: true
+    code-fold: true
+knitr:
+  opts_chunk:
+    out.width: "100%"
+execute: 
+  cache: false
+  warning: false
+---
+
+```{r}
+library(tidyverse)
+library(data.table)
+library(kableExtra)
+
+library(ggpubr) # kruskal-test in ggplot
+
+
+ggplot <- function(...){
+  ggplot2::ggplot(...) + 
+        scale_color_viridis_d(end = 0.8) +
+        scale_fill_viridis_d(end = 0.8)
+}
+    
+theme_set(theme_bw())
+```
+
+# Load & prepare data
+
+All random forest models are in \`data_preparation\\VAR_IMP\`.
+
+```{r}
+add2plot = function(p, vi, rsq, out){
+    t = data.frame(V1 = diag(vi)) %>% 
+        mutate(r = rank(-V1),
+               Variable_1 = row.names(.),
+               Variable_2 = row.names(.))
+    return(p +
+       ggtitle(paste(out, ": ", rsq, " %", sep = "")) +
+       geom_text(t, mapping=aes(label = r, alpha = -r), show.legend = F) +
+       geom_tile(t, mapping=aes(size = -r), col = "black", fill = NA, show.legend = F) +
+       scale_size_continuous(range = c(0.1, 1)) )
+}
+
+rename.axis = function(p){
+    return(
+        p +
+            scale_x_discrete(labels=c("root_mean" = "root_m",
+                                      "ag_mean" = "ag_m",
+                                      "bg_mean" = "bg_m",
+                                      "dbh_mean" = "dbh_m",
+                                      "height_mean" = "height_m",
+                                      "age_mean" = "age_m"),
+                             position = "top") +
+            scale_y_discrete(labels=c("root_mean" = "root_m",
+                                      "ag_mean" = "ag_m",
+                                      "bg_mean" = "bg_m",
+                                      "dbh_mean" = "dbh_m",
+                                      "height_mean" = "height_m",
+                                      "age_mean" = "age_m"))
+    )
+}
+```
+
+
+# Summary
+
+```{r}
+st_rf = readRDS(file = "../data_preparation/VAR_IMP/STAND/rf_fgraft.rds")
+st_vi = readRDS(file = "../data_preparation/VAR_IMP/STAND/vi_fgraft.rds")
+st_rsq = round(100 * st_rf$rsq[length(st_rf$rsq)], digits = 2)
+st_p = readRDS(file = "../data_preparation/VAR_IMP/STAND/viviHeatmap_fgraft.rds")
+st_p = add2plot(st_p, st_vi, st_rsq, "STAND - fgraft")
+
+gr_rf = readRDS(file = "../data_preparation/VAR_IMP/GROUP/rf_gs.rds")
+gr_vi = readRDS(file = "../data_preparation/VAR_IMP/GROUP/vi_gs.rds")
+gr_rsq = round(100 * gr_rf$rsq[length(gr_rf$rsq)], digits = 2)
+gr_p = readRDS(file = "../data_preparation/VAR_IMP/GROUP/viviHeatmap_gs.rds")
+gr_p = add2plot(gr_p, gr_vi, gr_rsq, "GROUP - gs")
+
+tr_rf = readRDS(file = "../data_preparation/VAR_IMP/TREE/rf_ROOTING_1.rds")
+tr_vi = readRDS(file = "../data_preparation/VAR_IMP/TREE/vi_ROOTING_1.rds")
+tr_rsq = data.frame(pred = tr_rf$predicted, obs = tr_rf$y) %>% 
+    mutate(same = ifelse(pred == obs, 1, 0)) %>% 
+    reframe(r = round(sum(same)/n()*100, 2))
+tr_p = readRDS(file = "../data_preparation/VAR_IMP/TREE/viviHeatmap_ROOTING_1.rds")
+tr_p = add2plot(tr_p, tr_vi, tr_rsq, "TREE - grafted")
+
+ggarrange(tr_p + scale_y_discrete(), 
+          gr_p + scale_y_discrete(), 
+          rename.axis(st_p), ncol = 3,
+          common.legend = T,
+          legend = "bottom",
+          labels = c("(a)", "(b)", "(c)"),
+          align = "hv")
+
+```
+

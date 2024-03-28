@@ -1,0 +1,850 @@
+---
+title: "pyNET: Scenario Exploration"
+editor: visual
+format: 
+  html:
+    toc: true
+    number-sections: true
+    code-fold: true
+knitr:
+  opts_chunk:
+    out.width: "100%"
+execute: 
+  cache: false
+  warning: false
+---
+
+```{r}
+library(tidyverse)
+library(data.table)
+library(kableExtra)
+
+library(ggforce)
+library(ggpubr) # kruskal-test in ggplot
+library(rstatix) # kruskal_effsize
+
+source("../data_preparation/helpers.R")
+ggplot <- function(...){
+  ggplot2::ggplot(...) + 
+        scale_color_viridis_d(end = 0.8) +
+        scale_fill_viridis_d(end = 0.8)
+}
+    
+theme_set(theme_bw())
+```
+
+# Load simulation results
+
+- Load simulation results
+- Select the desired scenarios
+
+```{r}
+envs = c(0:2)
+spes = c(0:2)
+grafts = c(0:3)
+```
+
+```{r}
+out_str = c("tdens", "dbh_mean", "root_mean")
+out_net = c("fgraft", "gdens", "gsm", "gsx", "fred", "fgain")
+out_gro = c("gs", "dist_mean", "nlinks")
+out_tre = c("RWE", "RWEgain", "RWEloss")
+
+in_graft = data.frame(GRAFTING = factor(c(0:3)),
+                      name = factor(c("noC/noE", 
+                                      "noC/E", "C/noE", "C/E")))
+in_root = data.frame(ROOTING = factor(c(0:2)),
+                      name = factor(c("large", 
+                                      "medium", "small")))
+in_res = data.frame(RESOURCES = factor(c(0:2)),
+                      name = factor(c("fixed",
+                                      "variable",
+                                      "seasonal")))
+```
+
+```{r}
+stands = fread(file = "../data/stands_50.txt") %>%
+    data.frame(.) %>%
+    mutate_at(vars(ROOTING, RESOURCES, GRAFTING), as.factor) %>%
+    rename("gsm" = "gs_mean",
+           "gsx" = "gs_max",
+           "fred" = "p_non_red_no2")
+
+groups = fread(file = "../data/groups_50.txt") %>%
+    data.frame(.) %>%
+    mutate_at(vars(ROOTING, RESOURCES, GRAFTING), as.factor) %>%
+    
+    select(-gIDpy) %>%  distinct(.) %>%
+    rename("gs" = "groupSize",
+           "nlinks" = "noLinks")
+
+links = fread(file = "../data/links_50.txt") %>%
+    data.frame(.) %>%
+    mutate_at(vars(ROOTING, RESOURCES, GRAFTING), as.factor)
+
+trees = fread(file = "../data/trees_50.txt") %>%
+    data.frame(.) %>%
+    mutate_at(vars(ROOTING, RESOURCES, GRAFTING), as.factor) %>%
+    mutate(
+        WU = water_available * 2629800 / 3600 / 24,
+        RWE = water_exchanged / water_available * 100,
+        grafted = ifelse(partner == "[]", "individual",
+                         "grafted"),
+        RWEabs = abs(RWE),
+        RWEgain = ifelse(RWE >= 0, RWE, NaN),
+        RWEloss = ifelse(RWE <= 0, RWE, NaN),
+        balance = ifelse(RWE > 0, "gain",
+                         ifelse(RWE == 0, "none", "loss"))
+    )
+trees = add_volume(trees)
+```
+
+# Structural parameters
+
+```{r}
+kw_str = data.frame()
+for (o in out_str) {
+    for (i in c("GRAFTING", "ROOTING", "RESOURCES")){
+        kwp = stands %>% kruskal_test(get(o) ~ get(i)) %>% select(p)
+        kw_str = bind_rows(kw_str,
+                       stands %>%
+                           kruskal_effsize(get(o) ~ get(i)) %>%
+                           mutate(OUT = o,
+                                  IN = i,
+                                  p.value = kwp[[1]],
+                                  q3 = quantile(stands[, o], 0.99)))
+                       
+    }
+}
+```
+
+```{r}
+stands %>% 
+    gather(., IN, input, ROOTING, RESOURCES, GRAFTING) %>%
+    gather(., OUT, output, all_of(out_str)) %>%
+    left_join(., kw_str, by = c("IN", "OUT")) %>% 
+    ggplot(., aes(x = input, y = output, fill = effsize)) +
+    geom_jitter(pch = ".", col = "grey", alpha = 0.6) +
+    geom_boxplot(alpha = 0.45) +
+    stat_compare_means(label.y.npc = 0.9, size = 3) +
+    scale_fill_viridis_c() +
+    facet_grid(OUT~IN, scales = "free") +
+    theme(legend.position = "bottom") +
+    labs(fill = "Kruskal-Wallis\nEffect Size")
+```
+
+
+## Correlation
+
+```{r}
+d1 <- copy(stands %>% 
+    select(setup, all_of(out_str)))
+
+d1_long = d1 %>% 
+    gather(., key, value, out_str) 
+```
+
+```{r}
+cormat_str = d1 %>% 
+  nest_by(setup) %>% 
+  summarise(CorMat = cor(data, method = "pearson")) 
+
+cormat_str = cormat_str$CorMat %>% as.data.frame() %>% 
+    mutate(setup = cormat_str$setup) %>% 
+        group_by(setup) %>% 
+    mutate(var = rep(out_str))
+
+
+colnames(cormat_str) = c(out_str, "setup", "var")
+
+
+p_cor_str = cormat_str %>% 
+    gather(., var2, rho, out_str) %>%
+    group_by(var, var2) %>% 
+    reframe(m = mean(rho),
+            sd = sd(rho)) %>%
+    mutate(var = factor(var, levels = out_str),
+           var2 = factor(var2, levels = out_str)) %>%
+    ggplot(., aes(x = var, y = var2, fill = m)) +
+    # geom_point(shape = 21, size = 5) +
+    geom_tile(col = "black", alpha = 0.7) +
+    coord_fixed() +
+    geom_text(aes(label = paste(round(m, 2), "\n\u00b1", round(sd, 2)))) +
+    scale_fill_gradient2(low = viridis::viridis(3)[1], 
+                         high = viridis::viridis(3)[2], 
+                         mid = viridis::viridis(3)[3],
+                         midpoint = 0,
+                         limits = c(-1, 1)) +
+    theme_classic() +
+    theme(axis.title = element_blank()) +
+    labs(fill = "Pearson's \u03c1")
+
+p_cor_str
+```
+
+# Network parameters
+
+```{r}
+kw_net = data.frame()
+for (o in out_net) {
+    for (i in c("GRAFTING", "ROOTING", "RESOURCES")){
+        ea = stands
+        ea[, o] = rank(ea[, o])
+           
+        ea = ea %>% 
+            mutate(mu = mean(get(o)),
+                   sigma_y2 = var(get(o))) %>%
+            group_by(get(i)) %>%
+            reframe(mui = mean(get(o)),
+                    mu, sigma_y2) %>% distinct(.) %>%
+            mutate(d = (mui - mu) ^ 2) %>%
+            ungroup() %>%
+            reframe(sigma_m = sqrt(sum(d) / n()), sigma_y2) %>%
+            distinct() %>%
+            mutate(eta2_anova = sigma_m ^ 2 / sigma_y2)
+        
+        kw = stands %>% kruskal_test(get(o) ~ get(i)) 
+        kwp = kw %>% select(p)
+        
+        k = length(unique(stands[, i]))
+        N = nrow(stands)
+        H = unclass(kw$statistic)
+        names(H) = NULL
+        eps2 = (H - k + 1) / (N - k) # eta Tomczak
+        eps2_tomczak = H / ((N^2 - 1) / (N + 1))
+
+        eta2 = H / (N - 1)        
+
+        
+        kw_net = bind_rows(kw_net,
+                       stands %>%
+                           kruskal_effsize(get(o) ~ get(i)) %>%
+                           mutate(OUT = o,
+                                  IN = i,
+                                  p.value = kwp[[1]],
+                                  q3 = quantile(stands[, o], 0.99),
+                                  eps2 = eps2,
+                                  eta2 = eta2,
+                                  eta2_anova = ea$eta2_anova))
+                       
+    }
+}
+```
+
+```{r}
+stands %>% 
+    gather(., IN, input, ROOTING, RESOURCES, GRAFTING) %>%
+    gather(., OUT, output, all_of(out_net)) %>%
+    left_join(., kw_net, by = c("IN", "OUT")) %>% 
+    ggplot(., aes(x = input, y = output, fill = effsize)) +
+    geom_jitter(pch = ".", col = "grey", alpha = 0.6) +
+    geom_boxplot(alpha = 0.45) +
+    stat_compare_means(label.y.npc = 0.9, size = 3) +
+    scale_fill_viridis_c() +
+    facet_grid(OUT~IN, scales = "free") +
+    theme(legend.position = "bottom") +
+    labs(fill = "Kruskal-Wallis\nEffect Size")
+```
+
+
+## Correlation
+
+```{r}
+d1 <- copy(stands %>% 
+    select(setup, all_of(out_net))) %>% 
+    distinct(.)
+
+d1_long = d1 %>% 
+    gather(., key, value, out_net) 
+```
+
+
+```{r}
+cormat_net = d1 %>% 
+  nest_by(setup) %>% 
+  summarise(CorMat = cor(data, method = "spearman")) 
+
+cormat_net = cormat_net$CorMat %>% as.data.frame() %>% 
+    mutate(setup = cormat_net$setup) %>% 
+        group_by(setup) %>% 
+    mutate(var = rep(out_net))
+
+
+colnames(cormat_net) = c(out_net, "setup", "var")
+
+
+p_cor_net = cormat_net %>% 
+    gather(., var2, rho, out_net) %>%
+    group_by(var, var2) %>% 
+    reframe(m = mean(rho, na.rm = T),
+            sd = sd(rho, na.rm = T)) %>%
+    mutate(var = factor(var, levels = out_net),
+           var2 = factor(var2, levels = out_net)) %>%
+    ggplot(., aes(x = var, y = var2, fill = m)) +
+    geom_tile(col = "black", alpha = 0.7) +
+    coord_fixed() +
+    geom_text(aes(label = paste(round(m, 2), "\n\u00b1", round(sd, 2)))) +
+    scale_fill_gradient2(low = viridis::viridis(3)[1], 
+                         high = viridis::viridis(3)[2], 
+                         mid = viridis::viridis(3)[3],
+                         midpoint = 0,
+                         limits = c(-1, 1)) +
+    theme_classic() +
+    theme(axis.title = element_blank()) +
+    labs(fill = "Spearman's \u03c1")
+
+p_cor_net
+```
+
+# Group parameters
+
+```{r}
+kw_gro = data.frame()
+for (o in out_gro) {
+    for (i in c("GRAFTING", "ROOTING", "RESOURCES")){
+        ea = groups
+        ea[, o] = rank(ea[, o])
+           
+        ea = ea %>% 
+            mutate(mu = mean(get(o)),
+                   sigma_y2 = var(get(o))) %>%
+            group_by(get(i)) %>%
+            reframe(mui = mean(get(o)),
+                    mu, sigma_y2) %>% distinct(.) %>%
+            mutate(d = (mui - mu) ^ 2) %>%
+            ungroup() %>%
+            reframe(sigma_m = sqrt(sum(d) / n()), sigma_y2) %>%
+            distinct() %>%
+            mutate(eta2_anova = sigma_m ^ 2 / sigma_y2)
+        
+        kwp = groups %>% kruskal_test(get(o) ~ get(i)) %>% select(p)
+        kw_gro = bind_rows(kw_gro,
+                       groups %>%
+                           kruskal_effsize(get(o) ~ get(i)) %>%
+                           mutate(OUT = o,
+                                  IN = i,
+                                  p.value = kwp[[1]],
+                                  eta2_anova =  ea$eta2_anova,
+                                  # input = max(as.numeric(groups[, i])),
+                                  # output = max(groups[, o]),
+                                  q3 = quantile(groups[, o], 0.99)))
+                       
+    }
+}
+```
+
+```{r}
+groups %>% 
+    gather(., IN, input, ROOTING, RESOURCES, GRAFTING) %>%
+    gather(., OUT, output, all_of(out_gro)) %>%
+    left_join(., kw_gro, by = c("IN", "OUT")) %>% #View()
+    ggplot(., aes(x = input, y = output, fill = effsize)) +
+    geom_jitter(pch = ".", col = "grey", alpha = 0.6) +
+    geom_boxplot(alpha = 0.75) +
+    stat_compare_means(label.y.npc = 0.9, size = 3) +
+    scale_fill_viridis_c() +
+    guides(col = F) +
+    facet_grid(OUT~IN, scales = "free") +
+    theme(legend.position = "bottom") +
+    labs(fill = "Kruskal-Wallis\nEffect Size")
+
+```
+
+## Correlation
+
+```{r}
+d1 <- copy(groups %>% 
+    select(setup, all_of(out_gro))) 
+
+d1_long = d1 %>% 
+    gather(., key, value, out_gro) 
+```
+
+```{r}
+cormat_gro = d1 %>% 
+  nest_by(setup) %>% 
+  summarise(CorMat = cor(data, method = "spearman")) 
+
+cormat_gro = cormat_gro$CorMat %>% as.data.frame() %>% 
+    mutate(setup = cormat_gro$setup) %>% 
+        group_by(setup) %>% 
+    mutate(var = rep(out_gro))
+
+
+colnames(cormat_gro) = c(out_gro, "setup", "var")
+
+
+p_cor_gro = cormat_gro %>% 
+    gather(., var2, rho, out_gro) %>%
+    group_by(var, var2) %>% 
+    reframe(m = mean(rho, na.rm = T),
+            sd = sd(rho, na.rm = T)) %>%
+    mutate(var = factor(var, levels = out_gro),
+           var2 = factor(var2, levels = out_gro)) %>%
+    ggplot(., aes(x = var, y = var2, fill = m)) +
+    geom_tile(col = "black", alpha = 0.7) +
+    coord_fixed() +
+    geom_text(aes(label = paste(round(m, 2), "\n\u00b1", round(sd, 2)))) +
+    scale_fill_gradient2(low = viridis::viridis(3)[1], 
+                         high = viridis::viridis(3)[2], 
+                         mid = viridis::viridis(3)[3],
+                         midpoint = 0,
+                         limits = c(-1, 1)) +
+    theme_classic() +
+    theme(axis.title = element_blank()) +
+    labs(fill = "Spearman's \u03c1")
+
+p_cor_gro
+```
+
+# Tree parameters
+
+```{r}
+kw_tre = data.frame()
+for (oh in out_tre) {
+    for (i in c("GRAFTING", "ROOTING", "RESOURCES")){
+        if (oh == "RWEgain"){
+            ttt = trees %>% 
+                filter(RWE >= 0)
+        } else if (oh == "RWEloss") {
+            ttt = trees %>% 
+                filter(RWE <= 0)
+        } else {
+            ttt = trees 
+        }
+        ea = ttt
+        o = "RWE"
+        ea[, o] = rank(ea[, o])
+           
+        ea = ea %>% 
+            mutate(mu = mean(get(o)),
+                   sigma_y2 = var(get(o))) %>%
+            group_by(get(i)) %>%
+            reframe(mui = mean(get(o)),
+                    mu, sigma_y2) %>% distinct(.) %>%
+            mutate(d = (mui - mu) ^ 2) %>%
+            ungroup() %>%
+            reframe(sigma_m = sqrt(sum(d) / n()), 
+                    sigma_y2) %>%
+            distinct() %>%
+            mutate(eta2_anova = sigma_m ^ 2 / sigma_y2)
+        
+        kwp = ttt %>% kruskal_test(get(o) ~ get(i)) %>%
+            select(p)
+        kw_tre = bind_rows(kw_tre,
+                       ttt %>%
+                           kruskal_effsize(get(o) ~ get(i)) %>%
+                           mutate(OUT = oh,
+                                  IN = i,
+                                  p.value = kwp[[1]],
+                                  eta2_anova =  ea$eta2_anova,
+                                  q3 = quantile(ttt[, o], 0.99)))
+                       
+    }
+}
+```
+
+```{r}
+trees %>% 
+    gather(., IN, input, ROOTING, RESOURCES, GRAFTING) %>%
+    gather(., OUT, output, all_of(out_tre)) %>%
+    left_join(., kw_tre, by = c("IN", "OUT")) %>%
+    ggplot(., aes(x = input, y = output, 
+                  fill = effsize)) +
+    geom_jitter(pch = ".", col = "grey", alpha = 0.6) +
+    geom_boxplot(alpha = 0.75) +
+    stat_compare_means(label.y.npc = 0.9, size = 3) +
+    facet_grid(OUT~IN, scales = "free") +
+    scale_fill_viridis_c() +
+    guides(col = F) +
+    theme(legend.position = "bottom") +
+    labs(fill = "Kruskal-Wallis\nEffect Size")
+
+```
+
+
+
+## Correlation
+
+```{r}
+out_tre2 = c("volume", "r_stem", "r_root", "RWE")
+d1 <- copy(trees %>% 
+    select(setup, out_tre2))
+
+cormat_tre = d1 %>% 
+  nest_by(setup) %>% 
+  summarise(CorMat = cor(data, method = "pearson")) 
+
+cormat_tre = cormat_tre$CorMat %>% as.data.frame() %>% 
+    mutate(setup = cormat_tre$setup) %>% 
+        group_by(setup) %>% 
+    mutate(var = rep(out_tre2))
+
+
+colnames(cormat_tre) = c(out_tre2, "setup", "var")
+
+
+p_cor_tre = cormat_tre %>% 
+    gather(., var2, rho, out_tre2) %>%
+    group_by(var, var2) %>% 
+    reframe(m = mean(rho, na.rm = T),
+            sd = sd(rho, na.rm = T)) %>%
+    mutate(var = factor(var, levels = out_tre2),
+           var2 = factor(var2, levels = out_tre2)) %>%
+    ggplot(., aes(x = var, y = var2, fill = m)) +
+    # geom_point(shape = 21, size = 5) +
+    geom_tile(col = "black", alpha = 0.7) +
+    coord_fixed() +
+    geom_text(aes(label = paste(round(m, 2), "\n\u00b1", round(sd, 2)))) +
+    scale_fill_gradient2(low = viridis::viridis(3)[1], 
+                         high = viridis::viridis(3)[2], 
+                         mid = viridis::viridis(3)[3],
+                         midpoint = 0,
+                         limits = c(-1, 1)) +
+    theme_classic() +
+    theme(axis.title = element_blank()) +
+    labs(fill = "Pearson's \u03c1")
+
+p_cor_tre
+```
+
+
+
+```{r}
+trees = add_volume(trees)
+rhos = trees %>% 
+    gather(., key, value, r_root, r_stem) %>% 
+    group_by(setup, key) %>%
+    reframe(rho_r_v = cor(value, volume, method = "pearson")) 
+
+rho_setup_m = rhos %>% 
+    group_by(key) %>% 
+    reframe(m = mean(rho_r_v),
+            sd = sd(rho_r_v))
+
+rhos %>% 
+    ggplot(., aes(x = key, y  = rho_r_v)) +
+    geom_boxplot() +
+    geom_jitter(alpha = 0.1)
+```
+
+```{r}
+trees %>% 
+    gather(., key, value, r_root, r_stem) %>% 
+    ggplot(., aes(x = value, y  = volume, col = ROOTING)) +
+    geom_point() +
+    facet_wrap(~key, scales = "free_x")
+```
+
+```{r eval=F}
+trees %>% 
+    gather(., key, value, r_root, r_stem) %>% 
+    group_by(key) %>%
+    reframe(rho_r_v = cor(value, volume, method = "pearson")) 
+```
+
+## Top View
+
+```{r}
+ttt = trees %>% 
+    filter(SEED == 3776) %>% 
+    filter(GRAFTING %in% c(0, 3) & RESOURCES %in% c(0, 2) & ROOTING == 0)
+
+lll = links %>% 
+    filter(SEED == 3776) %>% 
+    filter(GRAFTING %in% c(0, 3) & RESOURCES %in% c(0, 2) & ROOTING == 0)
+
+# assign correct group ID to trees data frame
+ttt = left_join(ttt, lll %>% 
+                  distinct(groupID, gIDpy1, setup, year) %>% 
+                  rename("gIDpy" = "gIDpy1"),
+                by = c("setup", "gIDpy", "year"))
+
+tt = ttt %>% ungroup() %>%
+  filter(year == max(year)) %>% 
+  mutate(groupID = ifelse(partner == "[]", NA, groupID),
+         grafted = ifelse(partner == "[]", "0", "1")) 
+
+ll = lll %>%
+  filter(year == max(year))
+```
+
+
+```{r}
+bg <- data.frame(RESOURCES = factor(2))
+
+GRAFT.labs <- c("GRAFTING 0:\nno cost & no exchange", "GRAFTING 3:\ncost & exchange")
+names(GRAFT.labs) <- c("0", "3")
+
+RES.labs <- c("RESOURCES 0:\nfixed", "RESOURCES 2:\nseasonal & variable")
+names(RES.labs) <- c("0", "2")
+
+p = tt %>% 
+  ggplot(.) +
+  coord_fixed(clip = 'off', xlim = c(-2, 32)) +
+  geom_point(aes(x = x, y = y)) +
+  geom_circle(
+    mapping = aes(
+      x0 = x,
+      y0 = y,
+      r = r_root,
+      color = grafted,
+      fill = groupID
+    ),
+    linewidth = 0.25,
+    # col = "black",
+    alpha = 0.7
+  ) +
+  geom_segment(
+    ll,
+    mapping = aes(
+      x = x1,
+      y = y1,
+      xend = x2,
+      yend = y2
+    ),
+    linewidth = 0.8,
+    col = "darkred"
+  ) +
+  scale_fill_viridis_d() +
+  scale_color_manual(values = c("darkgrey", "black")) +
+  guides(fill = F, col = F) +
+  facet_grid(RESOURCES ~ GRAFTING, 
+             labeller = labeller(GRAFTING = GRAFT.labs,
+                                 RESOURCES = RES.labs)) +
+  theme_classic() +
+  theme(legend.position = "bottom")
+
+l = tt %>% select(RESOURCES, GRAFTING) %>% 
+  distinct() %>% ungroup() %>% 
+  mutate(l = paste("(", letters[1:n()], ")", sep = ""))
+
+p +
+  geom_label(l, x = -1, y = 32, fontface = "bold",
+             alpha = 0.7, label.size = NA,
+            mapping = aes(label = l))
+```
+
+## Speed of root graft formation
+
+```{r}
+rgf = fread(file = "../data/rgf.txt") %>% 
+    mutate(ROOTING = factor(ROOTING))
+rg_func = fread(file = "../data/rg_func.txt") %>% 
+    mutate(ROOTING = factor(ROOTING))
+```
+
+
+```{r}
+dd = rgf %>% 
+    group_by(SEED, GRAFTING, ROOTING, RESOURCES) %>% 
+    mutate(p_died = sum(died_rgf) / n() * 100,
+           n = n(), 
+           s = sum(died_rgf)) %>% 
+    gather(., key, value, rgf_d, p_died) %>% 
+    bind_rows(rg_func %>% 
+                  rename("value" = "rgf_age_grafted") %>% 
+                  mutate(key = "rgf_age_grafted")) %>% 
+    group_by(GRAFTING, ROOTING, key) %>% 
+    reframe(med = median(value),
+            q75 = quantile(value, 0.75),
+            q25 = quantile(value, 0.25),
+            IQR = q75 - q25) %>% 
+    # spread(GRAFTING, rgf_age) %>% 
+    # View()
+    filter(GRAFTING %in% c(0, 3)) %>% 
+    mutate(key = factor(key,
+                        levels = c("rgf_d", "p_died", "rgf_age_grafted"),
+                        labels = c("Duration RGF",
+                                   "% died during RGF",
+                                   "Tree age first RG"))) 
+
+
+ll = dd %>% 
+    group_by(key) %>% 
+    reframe(GRAFTING, key, q75 = max(q75)) %>% 
+    distinct() %>% #View()
+    arrange(GRAFTING) %>% 
+    mutate(l = paste("(", letters[1:6], ")", sep = ""))
+
+GRAFT.labs <- c("GRAFTING 0:\nno cost & no exchange", "GRAFTING 3:\ncost & exchange")
+names(GRAFT.labs) <- c("0", "3")
+
+dd %>% 
+    mutate_at(vars(ROOTING, GRAFTING), as.factor) %>% 
+    ggplot(., aes(x = ROOTING, y = med)) +
+    geom_point(size = 3) +
+    geom_errorbar(aes(ymin = q25, ymax = q75), width = 0.2) +
+    geom_text(ll, mapping = aes(x = 0.7,
+                                y = q75,
+                                label = l),
+              size = 5) +
+    facet_grid(key~GRAFTING, scales = "free",
+               labeller = labeller(GRAFTING = GRAFT.labs)) +
+    labs(y = "value") +
+    theme(strip.text = element_text(size = 11.6),
+          axis.text = element_text(size = 11.6))
+```
+
+## Costs for graft formation and hydraulic redistribution
+
+```{r}
+df = trees %>% ungroup() %>%
+    mutate(costs = case_when(GRAFTING %in% c(0, 1) ~ "no costs",
+                             GRAFTING %in% c(2, 3) ~ "costs"),
+           benefits = case_when(GRAFTING %in% c(0, 2) ~ "no exchange",
+                                GRAFTING %in% c(1, 3) ~ "exchange"),
+           n_tot = n(),
+           stem_group = cut_interval(r_stem*200, 10)) %>%
+    group_by(costs, grafted) %>% 
+    mutate(p = n() / n_tot * 100) %>% 
+    filter(grafted == "grafted") 
+```
+
+
+```{r}
+dff = df %>% 
+    filter(GRAFTING %in% c(1, 3)) %>% 
+    mutate(RWE = water_exchanged/water_available*100,
+           Balance = ifelse(RWE >= 0, "gain", "loss"),
+           n_tot = n())
+
+
+ll = dff %>% 
+    group_by(stem_group) %>% 
+    mutate(n_tot = n()) %>% 
+    group_by(Balance, stem_group) %>% 
+    reframe(n = n()/n_tot*100,
+            q90 = quantile(abs(RWE), 0.99)) %>% distinct()
+
+dff %>% 
+    ggplot(., aes(y = abs(RWE), x = stem_group, col = Balance)) +
+    geom_boxplot(size = 0.3, outlier.size = 0.1) +
+    geom_text(ll, hjust = -0.1,
+              show.legend = F,
+              position = position_dodge(width = 1),
+              mapping = aes(y = q90*1.4,
+                            label = paste(round(n), "%"))) +
+    coord_flip() +
+    scale_x_discrete(limits=rev) +
+    stat_compare_means(label = "p.signif", show.legend = F) +
+    labs(y = "abs(RWE) (%)",
+         x = "Size class") +
+    theme(legend.position = c(0.8, 0.2))
+```
+
+```{r}
+df %>% 
+    filter(grafted == "grafted") %>%
+    group_by(stem_group) %>% 
+    mutate(wu = range01(water_available)) %>% 
+    ggplot(., aes(x = stem_group, 
+        col = benefits,
+        y = wu)) +
+    geom_boxplot() +
+    stat_compare_means(show.legend = F, label = "p.signif",
+                       label.y.npc = 0.9, size = 3) +
+    labs(col = "Scenario with",
+         x = "Size class",
+         y = "Water uptake normalized") +
+    theme(legend.position = "bottom")
+```
+```{r}
+df %>% 
+    filter(grafted == "grafted") %>% 
+    group_by(setup, GRAFTING, ROOTING, RESOURCES, plant, partner) %>% 
+    filter(year == min(year)) %>% 
+    gather(., key, value, r_stem, weight_girthgrowth) %>% 
+    group_by(key, stem_group) %>% 
+    mutate(value01 = range01(value)) %>% 
+    ggplot(., aes(y = value01,
+                  x = stem_group,
+                  col = costs
+    )) +
+    geom_boxplot() +
+    scale_fill_viridis_c() +
+    stat_compare_means(label.y.npc = 0.95, label = "p.signif",
+                       show.legend = F) +
+    facet_grid(key~., scales = "free") +
+    labs(col = "RGF with",
+         x = "Size class",
+         y = "Normalized value") +
+    theme(legend.position = "bottom")
+```
+
+
+# Summary
+## Statistics
+
+```{r}
+stands %>%
+    gather(., OUT, output, all_of(out_str), all_of(out_net)) %>%
+    bind_rows(
+        groups %>%
+            gather(., OUT, output, all_of(out_gro)),
+        trees %>%
+            filter(GRAFTING %in% c(1, 3)) %>%
+            gather(., OUT, output, all_of(out_tre))
+    ) %>%
+    select(OUT, output) %>% 
+    # View()
+    mutate(OUT = factor(OUT,
+                        levels = c(out_str, out_net, out_gro, out_tre))) %>% 
+    group_by(OUT) %>%
+    reframe(
+        m = mean(output, na.rm = T),
+        sd = sd(output, na.rm = T),
+        med = median(output, na.rm = T),
+        q25 = quantile(output, 0.25, na.rm = T),
+        q75 = quantile(output, 0.75, na.rm = T)
+    ) %>% 
+    mutate_if(is.numeric, signif, 3) %>% 
+    
+    kbl(caption = "Summary statistics of output variables.") %>%
+    kable_styling(full_width = F)
+```
+## Kruskal-Wallis Effect Size
+```{r}
+kw = bind_rows(kw_str %>% mutate(level = "structure"),
+               kw_net %>% mutate(level = "network"),
+               kw_gro %>% mutate(level = "group"),
+               kw_tre %>% mutate(level = "tree")) %>% 
+    mutate(level = factor(level,
+                          levels = c("structure",
+                                     "network", 
+                                     "group", "tree")))
+```
+
+```{r}
+kw %>% rowwise() %>% 
+    mutate(eta2 = round(effsize, 2),
+           eta2 = ifelse(eta2 < 0, 0, eta2),
+           signif = ifelse(p.value < 0.05, "*", ""),
+           es = paste0(eta2, " (", magnitude, ")", signif, collapse = "_")) %>% 
+    select(OUT, IN, es) %>% 
+    spread(IN, es) %>% 
+    kbl(caption = "Kruskal-Wallis Effect size by output variable.") %>%
+    kable_styling(full_width = F)
+```
+
+## Correlation
+
+```{r}
+ggarrange(p_cor_tre + ggtitle("Tree level"),
+          p_cor_str + ggtitle("Stand level"),
+          ncol = 2, 
+          common.legend = T,
+          legend = "right",
+          align = "hv",
+          labels = c("(a)", "(b)"))
+```
+
+
+```{r}
+ggarrange(p_cor_gro + ggtitle("Group level"),
+          p_cor_net + ggtitle("Stand level"),
+          ncol = 2, 
+          common.legend = T,
+          legend = "bottom",
+          align = "hv")
+```

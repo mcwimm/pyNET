@@ -1,0 +1,280 @@
+---
+title: "pyNET: Pattern assessment (ODD)"
+editor: visual
+format: 
+  html:
+    toc: true
+    number-sections: true
+    code-fold: true
+knitr:
+  opts_chunk:
+    out.width: "100%"
+execute: 
+  cache: false
+  warning: false
+---
+
+```{r}
+library(tidyverse)
+library(data.table)
+library(kableExtra)
+
+library(ggpubr)
+
+ggplot <- function(...){
+  ggplot2::ggplot(...) + 
+        scale_color_viridis_d(end = 0.8) +
+        scale_fill_viridis_d(end = 0.8)
+}
+    
+theme_set(theme_bw())
+```
+
+```{r}
+envs = c(0:2)
+spes = c(0:2)
+grafts = c(0:3)
+```
+
+```{r}
+out_str = c("tdens", "dbh_mean", "age_mean", "root_mean")
+out_net = c("fgraft", "gdens", "gsm", "gsx", "fred")
+out_gro = c("gs", "dist_mean", "nlinks")
+```
+
+```{r}
+stands = fread(file = "../data/stands_50.txt") %>%
+    data.frame(.) %>%
+    mutate_at(vars(ROOTING, RESOURCES, GRAFTING), as.factor) %>%
+    rename(
+        "gsm" = "gs_mean",
+        "gsx" = "gs_max",
+        "fred" = "p_non_red_no2",
+        "fred_all" = "p_non_red"
+    )
+
+groups = fread(file = "../data/groups_50.txt") %>%
+    data.frame(.) %>%
+    select(-gIDpy) %>% distinct(.) %>%
+    rename("gs" = "groupSize",
+           "nlinks" = "noLinks") 
+```
+
+# Patterns
+
+-   Pattern 1: Root graft frequency decreases with tree density.
+-   Pattern 2: Group density increases with tree density.
+-   Pattern 3: Group size decreases with tree density.
+-   Pattern 4: The network is scale free (i.e., node degree follows a power law distribution).
+-   Pattern 5: The majority of groups have a non-redundant shape.
+
+# P1-P3: Spearman Correlation
+
+```{r}
+p1p3_spearman = stands %>%
+    gather(., key, value, fgraft, gdens, gsm) %>%
+    group_by(GRAFTING, ROOTING, RESOURCES, key) %>%
+    reframe(rxy = cor.test(value, tdens)$estimate,
+            p.value = cor.test(value, tdens)$p.value) %>%
+    mutate(signif = ifelse(p.value < 0.05, "*", "ns"),
+           pattern = factor(key,
+                            labels = c("P1", "P2", "P3"))) 
+```
+
+```{r}
+p1p3_spearman %>%
+    ggplot(., aes(x = key, y = rxy)) +
+    geom_hline(yintercept = 0, col = "grey") +
+    geom_boxplot() +
+    geom_point(aes(alpha = signif, shape = signif),
+               position = position_jitterdodge()) +
+    scale_alpha_manual(values = c(1, 0.2)) +
+    facet_wrap( ~ pattern, scales = "free_x") +
+    labs(x = "Y",
+         y = "Spearman's rxy")
+```
+
+```{r}
+p1p3_spearman %>%
+    ggplot(., aes(x = ROOTING, 
+                  col = GRAFTING,
+                  # alpha = GRAFTING,
+                  y = rxy)) +
+    geom_hline(yintercept = 0, col = "grey") +
+    geom_boxplot() +
+    geom_point(aes(alpha = signif, shape = signif),
+               position = position_jitterdodge()) +
+    scale_alpha_manual(values = c(1, 0.2)) +
+    facet_wrap( ~ pattern, scales = "free_x") +
+    labs(#x = "Y",
+         y = "Spearman's rxy") +
+    facet_wrap(~key)
+```
+
+```{r}
+p1p3_spearman %>% 
+    mutate(c = ifelse(signif == "*", 1, 0),
+           pos = ifelse(rxy > 0, 1, 0)) %>% #View()
+    group_by(key) %>% 
+    reframe(p_sign = sum(c)/n()*100,
+            p_pos = sum(pos)/n()*100,
+            rxy_m = mean(rxy),
+            rxy_sd = sd(rxy)) %>% 
+    mutate_if(is.numeric, round, 1) %>% #View()
+   kbl(caption = "Summary of Spearman correlations across scenarios. 'p_sign' indicates the % of significant scenarios and 'p_pos' indicates the % of positive correlations.") %>%
+   kable_styling(full_width = F)
+```
+
+# P4: The network is scale free (i.e., node degree follows a power law distribution).
+
+```{r}
+nd_distribution = fread(file = "../data/nd_distribution.txt") %>%
+    data.frame(.) %>%
+    mutate(ROOTING = factor(SPE),
+           GRAFTING = factor(GRAFT),
+           RESOURCES = factor(ENV)) %>% 
+   filter(RESOURCES %in% envs)  %>% 
+   filter(GRAFTING %in% grafts)  %>% 
+   filter(ROOTING %in% spes) 
+
+nd_power_law = fread(file = "../data/nd_power_law.txt") %>%
+    data.frame(.) %>%
+    mutate(ROOTING = factor(SPE),
+           RESOURCES = factor(ENV),
+           GRAFTING = factor(GRAFT)) %>%
+    filter(RESOURCES %in% envs) %>%
+    filter(GRAFTING %in% grafts) %>%
+    filter(ROOTING %in% spes) %>%
+    mutate(signif = ifelse(KS.p < 0.05, "*", "ns"),
+           lab.y = as.numeric(ROOTING)/4+0.15)
+```
+
+```{r}
+nd_distribution %>% 
+   group_by(ROOTING, GRAFTING, RESOURCES, k) %>% 
+   mutate(p_k_m = mean(p_k)) %>% 
+   ggplot(., aes(x = k, y = p_k, col = ROOTING)) +
+   geom_line(size = 0.3, alpha = 0.3,
+             aes(group = setup)) +
+   geom_point(aes(y = p_k_m), size = 2) +
+    geom_text(nd_power_law,
+              mapping = aes(x = 7, y = lab.y,
+                            label = signif, col = ROOTING),
+              show.legend = FALSE) +
+   scale_x_continuous(breaks=seq(1, max(nd_distribution$k)+1, 3)) +
+   facet_grid(RESOURCES~GRAFTING, labeller = label_both) +
+   labs(x = "Node degree")
+```
+
+```{r}
+nd_power_law %>% 
+    group_by(signif) %>% 
+    reframe(p = round(n()/nrow(nd_power_law)*100, 1),
+            gsm = mean(gsm),
+            gsx = mean(gsx))
+```
+
+# P5: The majority of groups have a non-redundant shape.
+
+```{r}
+stands %>% 
+    filter(fred != 0) %>% 
+    gather(., key, value, fred_all, fred) %>% 
+    ggplot(., aes(x = ROOTING, fill = GRAFTING, alpha = RESOURCES, y = value)) +
+    geom_hline(yintercept = 50, col = "grey") +
+    geom_boxplot() +
+    guides(alpha = guide_legend(override.aes = aes(fill = "grey"))) +
+    facet_wrap(~key, ncol = 1)
+```
+
+```{r}
+stands %>% 
+    group_by(setup) %>% 
+    reframe(fred = mean(fred)) %>% 
+    mutate(no_scen = n()) %>% 
+    filter(fred != 0) %>% 
+    mutate(no_scen_m2 = n()) %>% 
+    filter(fred > 50) %>% 
+    reframe(no_scen, no_scen_m2, no_scen_nf = n()) %>% distinct(.) %>% 
+    mutate(p_tot = no_scen_nf/no_scen*100,
+           p_nr_g3 = no_scen_nf/no_scen_m2*100,
+           p_g3 = (no_scen-no_scen_m2)/no_scen*100)
+```
+
+# Summary
+
+## 1 Scenario
+
+```{r}
+RO = 0 # large
+RE = 0 # fixed
+GR = 3 # costs&exchange
+```
+
+```{r}
+sss = stands %>%
+    filter(ROOTING == RO & RESOURCES == RE & GRAFTING == GR) %>% distinct()
+
+nd_d = nd_distribution %>%
+    filter(ROOTING == RO & RESOURCES == RE & GRAFTING == GR)
+
+nd_pl = nd_power_law %>%
+    filter(ROOTING == RO & RESOURCES == RE & GRAFTING == GR)
+```
+
+```{r}
+labs = list("tdens"=expression(paste(Tree~density~(trees~ha^-1))),
+            "gdens"=expression(paste(Group~density~(groups~ha^-1))),
+            "fgraft"="Grafting frequency (%)",
+            "gsm"="Mean group size",
+            "fred"="Non-redundant groups (%)")
+```
+
+```{r}
+fig_p1 = sss %>% 
+    ggplot(., aes(x = tdens, y = fgraft)) +
+    geom_point(alpha = 0.7) +
+    stat_cor(method = "spearman", digits = 1) +
+    labs(x = labs["tdens"][[1]],
+         y = labs["fgraft"][[1]])
+
+fig_p2 = sss %>% 
+    ggplot(., aes(x = tdens, y = gdens)) +
+    geom_point(alpha = 0.7) +
+    stat_cor(method = "spearman", digits = 1) +
+    labs(x = labs["tdens"][[1]],
+         y = labs["gdens"][[1]])
+
+fig_p3 = sss %>% 
+    ggplot(., aes(x = tdens, y = gsm)) +
+    geom_point(alpha = 0.7) +
+    stat_cor(method = "spearman", digits = 1) +
+    labs(x = labs["tdens"][[1]],
+         y = labs["gsm"][[1]])
+
+fig_p4 = nd_d %>%
+    group_by(ROOTING, k) %>%
+    mutate(p_k_m = mean(p_k)) %>%
+    ggplot(., aes(x = k, y = p_k)) +
+    geom_line(size = 0.3, alpha = 0.3,
+              aes(group = setup)) +
+    geom_point(aes(y = p_k_m), size = 2) +
+    scale_x_continuous(breaks = seq(1, max(nd_d$k) + 1, 3)) +
+    labs(x = "Node degree",
+         y = "P(k)")
+
+fig_p5 = sss %>% 
+    filter(fred != 0) %>%
+    ggplot(., aes(x = "", y = fred)) +
+    geom_hline(yintercept = 50, col = "grey") +
+    geom_boxplot() +
+    geom_jitter() +
+    guides(alpha = guide_legend(override.aes = aes(fill = "grey"))) +
+    labs(x = "",
+         y = labs["fred"][[1]])
+
+
+ggarrange(fig_p1, fig_p2, fig_p3, fig_p4, fig_p5,
+          labels = c("(a)", "(b)", "(c)", "(d)", "(e)"))
+
+```

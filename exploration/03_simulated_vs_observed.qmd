@@ -1,0 +1,668 @@
+---
+title: "pyNET: Simulated vs. observed data – Research question 1: Which processes are essential to describe root graft network patterns?"
+editor: visual
+format: 
+  html:
+    toc: true
+    number-sections: true
+    code-fold: true
+knitr:
+  opts_chunk:
+    out.width: "100%"
+execute: 
+  cache: false
+  warning: false
+---
+
+```{r}
+library(tidyverse)
+library(data.table)
+library(kableExtra)
+
+library(ggforce)
+library(ggpubr) # kruskal-test in ggplot
+library(dunn.test)
+
+
+ggplot <- function(...){
+  ggplot2::ggplot(...) + 
+        scale_color_viridis_d(end = 0.8) +
+        scale_fill_viridis_d(end = 0.8)
+}
+    
+theme_set(theme_bw())
+```
+
+# Load & prepare data
+## Simulation results
+
+```{r}
+envs = c(0:2)
+spes = c(0:2)
+grafts = c(0:3)
+```
+
+```{r}
+out_str = c("tdens", "dbh_mean")
+out_net = c("fgraft", "gdens", "gsm", "gsx", "fred")
+out_gro = c("gs", "dist_mean", "nlinks")
+```
+
+```{r}
+stands = fread(file = "../data/stands_50.txt") %>%
+    data.frame(.) %>%
+    mutate_at(vars(ROOTING, RESOURCES, GRAFTING), as.factor) %>%
+    rename(
+        "gsm" = "gs_mean",
+        "gsx" = "gs_max",
+        "fred" = "p_non_red_no2",
+        "fred_all" = "p_non_red"
+    )
+
+groups = fread(file = "../data/groups_50.txt") %>%
+    data.frame(.) %>%
+    select(-gIDpy) %>% distinct(.) %>%
+    rename("gs" = "groupSize",
+           "nlinks" = "noLinks") 
+```
+
+## Observed variables (Vovides et al. 2018, 2021)
+
+```{r}
+load("../data/OBS/LMtrees.Rda")
+load("../data/OBS/LMgroups.Rda")
+LM.groups = LM.groups %>% 
+    rename("gs" = "no.memb",
+           "nlinks" = "no.links",
+           "dist_mean" = "dist2memb.mean",
+           "dist_max" = "dist2memb.max") %>% 
+    mutate(shape = nlinks / (gs - 1)) %>% 
+    select(LOC, all_of(out_gro))
+```
+
+### Structural variables
+
+```{r}
+LM.structure = LM.trees %>% 
+    group_by(LOC) %>% 
+    mutate(dens_trees = n()/(30*30/10000),
+           dbh_trees = mean(DBH),
+           avi_count = ifelse(Sp == "A", 1, 0),
+           rel_avi = sum(avi_count) / n())
+
+LM.structure.avi = LM.structure %>% 
+    filter(Sp == "A") %>% 
+    mutate(dens_avi = n()/(30*30/10000),
+           dbh_avi = mean(DBH)) %>% 
+    select(LOC, dens_trees, dbh_trees,
+           dens_avi, dbh_avi) %>% 
+    distinct(.) 
+
+LM.structure.avi = LM.structure.avi %>% 
+    select(LOC, dens_trees, dbh_avi) 
+colnames(LM.structure.avi) = c("LOC", "tdens",
+                               "dbh_mean")
+```
+
+### Network variables
+
+```{r}
+LM.network = LM.trees %>% 
+    group_by(LOC) %>% 
+    mutate(no_trees = n()) %>% 
+    filter(Sp == "A") %>% 
+    mutate(no_avi = n()) %>% 
+    filter(netDeg != 0) %>% 
+    reframe(no_trees, no_avi, no_grafted = n()) %>% distinct(.) %>% 
+    mutate(fgraft_avi = no_grafted/no_avi * 100,
+           fgraft_all = no_grafted/no_trees * 100)
+
+gg = LM.groups %>%
+    mutate(
+        shape = nlinks / (gs - 1),
+        non_redundant = ifelse(shape == 1, 1, 0),
+        gs2 = ifelse(gs == 2, 0, 1),
+        non_red_2 = ifelse(non_redundant + gs2 == 2, 1, 0)
+    ) %>%
+    group_by(LOC) %>%
+    reframe(
+        no_groups = n(),
+        no_groups_bigger_2 = sum(gs2),
+        gdens = no_groups / (30 * 30 / 10000),
+        gsx = max(gs),
+        gsm = mean(gs),
+        links_mean = mean(nlinks),
+        p_non_red = sum(non_redundant) / no_groups * 100,
+        fred = sum(non_red_2) / no_groups_bigger_2 * 100
+    ) %>% 
+    select(LOC, out_net[-1])
+
+LM.network = merge(LM.network, gg, by = "LOC") 
+
+LM.network$fgraft = LM.network$fgraft_avi
+LM.network$fgraft_avi = NULL
+LM.network$fgraft_all = NULL
+
+```
+
+
+
+## Combine data
+
+```{r}
+struct = stands %>%
+    gather(., key, value, out_str) %>%
+    select(key, value, SEED, year, 
+           ROOTING:RESOURCES) %>% 
+    mutate(data = "mod", sp = "") %>% 
+    mutate(x = paste("RO", ROOTING, 
+                      "GR", GRAFTING, 
+                      "RE" ,RESOURCES,
+                      sep = ".")) %>%# View()
+    bind_rows(LM.structure.avi %>%
+                  mutate(x = "OBS") %>% 
+            gather(key, value, out_str)) %>% 
+    mutate(key = factor(key,
+                        levels = c("tdens",
+                                   "dbh_mean"))) 
+```
+
+
+
+```{r}
+nets = stands %>%
+    filter(fred != 0) %>% 
+    gather(., key, value, all_of(out_net)) %>% 
+    select(key, value, SEED, year, 
+           ROOTING:RESOURCES) %>% 
+    rowwise() %>% 
+    mutate(x = paste("RO", ROOTING, 
+                      "GR", GRAFTING, 
+                      "RE" ,RESOURCES,
+                      sep = ".")) %>% 
+    bind_rows(LM.network %>%
+                  mutate(x = "OBS") %>% 
+            gather(key, value, all_of(out_net))) %>% 
+    mutate(key = factor(key,
+                        levels = out_net)) %>% 
+    data.frame(.)
+```
+
+
+```{r}
+grps = groups %>%
+    gather(., key, value, out_gro) %>% 
+    select(key, value, SEED, year, ROOTING:GRAFTING) %>% 
+    rowwise() %>% 
+    mutate(x = paste("RO", ROOTING, 
+                      "GR", GRAFTING, 
+                      "RE" ,RESOURCES,
+                      sep = ".")) %>%# View()
+    bind_rows(LM.groups %>%
+                  gather(., key, value, out_gro) %>% 
+                  mutate(x = "OBS")) %>% 
+    mutate(key = factor(key,
+                        levels = out_gro)) %>% 
+    data.frame(.)
+```
+
+# Structural variables
+
+
+```{r eval=F}
+dt_mod_obs = data.frame()
+for (out_var in out_str){
+    df = struct %>%
+        filter(key == out_var) 
+    
+    kw = kruskal.test(value ~ x, data = df)
+    
+    dt = dunn.test::dunn.test(
+        df$value,
+        g = df$x,
+        kw = FALSE,
+    )
+    
+    dt = data.frame(pairs = dt$comparisons,
+                    p.value = dt$P.adjusted) %>% 
+        mutate(signif = ifelse(p.value < 0.05, "*", "ns"))
+    dt = dt %>% 
+        separate(col = pairs,
+             into = c("S1", "S2"),
+             sep = " - ") 
+    dt_ns = dt %>% 
+        filter(S1 %in% "OBS" | S2 %in% "OBS") %>% 
+        filter(signif == "ns")
+    dt_mod_obs = bind_rows(dt_mod_obs,
+                           dt_ns %>% mutate(key = out_var))
+}
+fwrite(dt_mod_obs, "../data/OBS/dunn_struct.txt")
+```
+
+```{r}
+dt_mod_obs_struct = fread("../data/OBS/dunn_struct.txt") 
+dt_mod_obs_struct = dt_mod_obs_struct %>% 
+    bind_rows(.,data.frame(key = unique(dt_mod_obs_struct$key)) %>% 
+                  mutate("S2" = "OBS", signif = "ns"))
+```
+
+```{r}
+lm.avi.mix = struct %>% 
+  filter(x == "OBS") %>% 
+  group_by(key) %>% 
+  reframe(med = median(value),
+          q25 = quantile(value, 0.25),
+          q75 = quantile(value, 0.75),
+          lb = min(value),
+          ub = max(value))
+
+lm.all = LM.structure %>% select(dbh_trees) %>% 
+    distinct() %>% ungroup() %>% 
+  reframe(med = median(dbh_trees),
+          q25 = quantile(dbh_trees, 0.25),
+          q75 = quantile(dbh_trees, 0.75),
+          lb = min(dbh_trees),
+          ub = max(dbh_trees)) %>%
+    mutate(key = factor("dbh_mean",
+                        levels = levels(struct$key)))
+
+lm.avi.mono = LM.structure %>% filter(rel_avi > 0.95) %>% 
+    select(dbh_trees) %>% 
+    distinct() %>% ungroup() %>% 
+  reframe(med = median(dbh_trees),
+          q25 = quantile(dbh_trees, 0.25),
+          q75 = quantile(dbh_trees, 0.75),
+          lb = min(dbh_trees),
+          ub = max(dbh_trees)) %>%
+    mutate(key = factor("dbh_mean",
+                        levels = levels(struct$key)))
+df = struct %>%
+    left_join(., dt_mod_obs_struct %>%
+                  rename("x" = "S2"),
+              by = c("key", "x")) %>%
+    filter(x != "OBS") %>%
+    rename("RES" = "RESOURCES",
+           "ROOT" = "ROOTING") %>%
+    mutate(key = factor(key, levels = out_str)) 
+
+ggplot() +
+    geom_rect(
+        lm.avi.mix,
+        mapping = aes(
+            xmin = -Inf,
+            xmax = Inf,
+            ymin = lb,
+            ymax = ub
+        ),
+        fill = "darkred",
+        alpha = 0.05
+    ) +
+    geom_rect(
+        lm.avi.mix,
+        mapping = aes(
+            xmin = -Inf,
+            xmax = Inf,
+            ymin = q25,
+            ymax = q75
+        ),
+        fill = "darkred",
+        alpha = 0.1
+    ) +
+    geom_hline(
+        lm.avi.mix %>%
+            gather(., bound, bvalue, lb, ub),
+        mapping = aes(yintercept = bvalue),
+        col = "darkred",
+        linetype = "dotted"
+    ) +
+    geom_hline(
+        lm.avi.mix,
+        size = 0.75,
+        mapping = aes(yintercept = med, col = "All trees"),
+    ) +
+    geom_hline(
+        lm.all,
+        size = 0.75,
+        mapping = aes(yintercept = med, col = "Avicennia Mixed"),
+    ) +
+    geom_hline(
+        lm.avi.mono,
+        size = 0.75,
+        mapping = aes(yintercept = med, col = "Avicennia Mono"),
+    ) +
+    geom_boxplot(df %>%
+                     filter(signif == "ns"),
+                 mapping = aes(x = GRAFTING, y = value, fill = "non-signif"),
+             alpha = 0.5,
+             col = "darkgreen"
+             ) +
+    geom_boxplot(df %>%
+                     filter(is.na(signif)),
+                 mapping = aes(x = GRAFTING, y = value, fill = "signif"),
+                 alpha = 0.5,
+             col = "grey"
+             ) +
+    scale_color_manual(
+        values = c("darkred", "darkblue", "darkorange3")
+    ) +
+    scale_fill_manual(values = c("white", "white")) +
+    labs(fill = "Dunn's test OBS vs. MOD",
+         col = "Observed data") +
+    facet_grid(key ~ ROOT + RES,
+               scales = "free",
+               labeller = labeller(.cols = label_both)) +
+    theme(legend.position = "bottom",
+          legend.box = "vertical")
+
+```
+
+
+
+```{r}
+dt_mod_obs_struct %>% 
+    filter(S1 == "OBS") %>% 
+    select(-p.value) %>% 
+    spread(key, signif) %>% 
+    mutate(n_tot = n()) %>% 
+    filter(complete.cases(.)) %>%
+    reframe(n_complete = n(), n_tot,
+            p_complete = round(n_complete/n_tot*100, 1)) %>%
+    distinct() 
+```
+
+# Network variables
+
+
+```{r eval=F}
+dt_mod_obs = data.frame()
+for (out_var in out_net){
+    df = nets %>%
+        filter(key == out_var) 
+    
+    kw = kruskal.test(value ~ x, data = df)
+    
+    dt = dunn.test::dunn.test(
+        df$value,
+        g = df$x,
+        # table = FALSE,
+        kw = FALSE,
+        # method = "holm"
+    )
+    
+    dt = data.frame(pairs = dt$comparisons,
+                    p.value = dt$P.adjusted) %>% 
+        mutate(signif = ifelse(p.value < 0.05, "*", "ns"))
+    dt = dt %>% 
+        separate(col = pairs,
+             into = c("S1", "S2"),
+             sep = " - ") 
+    dt_ns = dt %>% 
+        filter(S1 %in% "OBS" | S2 %in% "OBS") %>% 
+        filter(signif == "ns")
+    dt_mod_obs = bind_rows(dt_mod_obs,
+                           dt_ns %>% mutate(key = out_var))
+}
+fwrite(dt_mod_obs, "../data/OBS/dunn_netw.txt")
+```
+
+```{r}
+dt_mod_obs_netw = fread("../data/OBS/dunn_netw.txt") 
+dt_mod_obs_netw = dt_mod_obs_netw %>% 
+    bind_rows(.,data.frame(key = unique(dt_mod_obs_netw$key)) %>% 
+                  mutate("S2" = "OBS", signif = "ns"))
+```
+
+```{r}
+lm.sum = nets %>%
+    filter(x == "OBS") %>%
+    mutate(
+        value = ifelse(key %in% c("gsm", "gsx"), log(value), value),
+        key = case_when(key == "gsm" ~ "ln(gsm)",
+                        key == "gsx" ~ "ln(gsx)",
+                        TRUE ~ key)
+    ) %>% 
+    group_by(key) %>%
+    reframe(
+        med = median(value),
+        q25 = quantile(value, 0.25),
+        q75 = quantile(value, 0.75),
+        lb = min(value),
+        ub = max(value)
+    )
+nets %>%
+    left_join(., dt_mod_obs_netw %>%
+                  rename("x" = "S2"), by = c("key", "x")) %>%
+    filter(x != "OBS") %>%
+    rename("RES" = "RESOURCES",
+           "ROOT" = "ROOTING") %>%
+    mutate(
+        value = ifelse(key %in% c("gsm", "gsx"), log(value), value),
+        key = case_when(key == "gsm" ~ "ln(gsm)",
+                        key == "gsx" ~ "ln(gsx)",
+                        TRUE ~ key)
+    ) %>% 
+  ggplot(.) +
+    geom_rect(lm.sum,
+            mapping = aes(xmin = -Inf, xmax = Inf,
+                          ymin = lb, ymax = ub),
+            fill = "darkred", alpha = 0.05) +
+  geom_rect(lm.sum,
+            mapping = aes(xmin = -Inf, xmax = Inf,
+                          ymin = q25, ymax = q75),
+            fill = "darkred", alpha = 0.1) +
+  geom_hline(lm.sum, size = 1,
+            mapping = aes(yintercept = med),
+            col = "darkred") +
+  geom_hline(lm.sum %>% 
+               gather(., bound, bvalue, lb, ub),
+            mapping = aes(yintercept = bvalue),
+            col = "darkred", linetype = "dotted") +
+  geom_boxplot(aes(x = GRAFTING, y = value, col = signif),
+               alpha = 0.5, fill = "white") +
+
+  scale_color_manual(values = c("darkgreen", "grey"),
+                     labels = c("non-signif", "signif"),
+                    na.translate = T) + 
+  facet_grid(key ~ ROOT + RES, scales = "free",
+             labeller = labeller(.cols = label_both)) +
+    labs(col = "Dunn's test OBS vs. MOD") +
+  theme(legend.position = "bottom")
+
+```
+
+
+
+\*without *gdens*
+
+```{r}
+dt_mod_obs_netw %>% 
+    filter(S1 == "OBS") %>% 
+    filter(key != "gdens") %>% 
+    select(-p.value) %>% 
+    spread(key, signif) %>% 
+    mutate(n_tot = 36) %>% 
+    filter(complete.cases(.)) %>%
+    reframe(n_complete = n(), n_tot,
+            p_complete = round(n_complete/n_tot*100, 1)) %>%
+    distinct()
+```
+
+# Group variables
+
+
+```{r eval=F}
+dt_mod_obs = data.frame()
+for (out_var in out_gro){
+    df = grps %>%
+        filter(key == out_var) 
+    
+    kw = kruskal.test(value ~ x, data = df)
+    
+    dt = dunn.test::dunn.test(
+        df$value,
+        g = df$x,
+        kw = FALSE#,
+        # method = "holm"
+    )
+    
+    dt = data.frame(pairs = dt$comparisons,
+                    p.value = dt$P.adjusted) %>% 
+        mutate(signif = ifelse(p.value < 0.05, "*", "ns"))
+    dt = dt %>% 
+        separate(col = pairs,
+             into = c("S1", "S2"),
+             sep = " - ") 
+    dt_ns = dt %>% 
+        filter(S1 %in% "OBS" | S2 %in% "OBS") %>% 
+        filter(signif == "ns")
+    dt_mod_obs = bind_rows(dt_mod_obs,
+                           dt_ns %>% mutate(key = out_var))
+}
+fwrite(dt_mod_obs, "../data/OBS/dunn_grps.txt")
+```
+
+```{r}
+dt_mod_obs_grps = fread("../data/OBS/dunn_grps.txt") 
+dt_mod_obs_grps = dt_mod_obs_grps %>% 
+    bind_rows(.,data.frame(key = unique(dt_mod_obs_grps$key)) %>% 
+                  mutate("S2" = "OBS", signif = "ns"))
+```
+
+```{r}
+lm.sum = grps %>%
+    filter(x == "OBS") %>%
+    mutate(
+        value = ifelse(key %in% c("gs", "nlinks"), log(value), value),
+        key = case_when(key == "gs" ~ "ln(gs)",
+                        key == "nlinks" ~ "ln(nlinks)",
+                        TRUE ~ key)
+    ) %>%
+    group_by(key) %>%
+    reframe(
+        med = median(value),
+        q25 = quantile(value, 0.25),
+        q75 = quantile(value, 0.75),
+        lb = min(value),
+        ub = max(value)
+    )
+grps %>%
+    left_join(., dt_mod_obs_grps %>%
+                  rename("x" = "S2"), by = c("key", "x")) %>%
+    filter(x != "OBS") %>%
+    rename("RES" = "RESOURCES",
+           "ROOT" = "ROOTING") %>%
+    mutate(
+        value = ifelse(key %in% c("gs", "nlinks"), log(value), value),
+        key = case_when(key == "gs" ~ "ln(gs)",
+                        key == "nlinks" ~ "ln(nlinks)",
+                        TRUE ~ key)
+    ) %>%
+    ggplot(.) +
+    geom_rect(
+        lm.sum,
+        mapping = aes(
+            xmin = -Inf,
+            xmax = Inf,
+            ymin = lb,
+            ymax = ub
+        ),
+        fill = "darkred",
+        alpha = 0.05
+    ) +
+    geom_rect(
+        lm.sum,
+        mapping = aes(
+            xmin = -Inf,
+            xmax = Inf,
+            ymin = q25,
+            ymax = q75
+        ),
+        fill = "darkred",
+        alpha = 0.1
+    ) +
+    geom_hline(
+        lm.sum,
+        size = 1,
+        mapping = aes(yintercept = med),
+        col = "darkred"
+    ) +
+    geom_hline(
+        lm.sum %>%
+            gather(., bound, bvalue, lb, ub),
+        mapping = aes(yintercept = bvalue),
+        col = "darkred",
+        linetype = "dotted"
+    ) +
+    geom_boxplot(aes(x = GRAFTING, y = value,
+                     col = signif),
+                 alpha = 0.5, fill = "white") +
+    scale_color_manual(
+        values = c("darkgreen", "grey"),
+        labels = c("non-signif", "signif"),
+        na.translate = T
+    ) +
+    facet_grid(key ~ ROOT + RES,
+               scales = "free",
+               labeller = labeller(.cols = label_both)) +
+    labs(col = "Dunn's test OBS vs. MOD") +
+    theme(legend.position = "bottom")
+
+```
+
+
+
+```{r}
+dt_mod_obs_grps %>% 
+    filter(S1 == "OBS") %>% 
+    select(-p.value) %>% 
+    spread(key, signif) %>% 
+    mutate(n_tot = 36) %>% 
+    filter(complete.cases(.)) %>%
+    reframe(n_complete = n(), n_tot,
+            p_complete = round(n_complete/n_tot*100, 1)) %>%
+    distinct()
+```
+
+# Summary
+
+```{r}
+RES.labs <- c("RESOURCES 0:\nfixed", 
+              "RESOURCES 1:\nvariable", 
+              "RESOURCES 2:\nseasonal & variable")
+names(RES.labs) <- c("0", "1", "2")
+
+dt_mod_obs = bind_rows(dt_mod_obs_struct,
+                       dt_mod_obs_netw,
+                       dt_mod_obs_grps) %>%
+    filter(S2 != "OBS") %>% 
+    separate_wider_delim(S2, ".", cols_remove = F,
+                         names = c(NA, "ROOTING", NA,
+                                   "GRAFTING", NA,
+                                   "RESOURCES")) %>% 
+  mutate(ROOTING = factor(ROOTING),
+         GRAFTING = factor(GRAFTING))
+
+
+dt_mod_obs = dt_mod_obs %>% 
+    group_by(ROOTING, GRAFTING, RESOURCES) %>% 
+    reframe(n = n(),
+            p = n/10*100) 
+l = data.frame(RESOURCES = c(0:2),
+               l = paste("(", letters[1:3], ")", sep = "")) 
+dt_mod_obs %>% 
+    ggplot(., aes(GRAFTING, ROOTING)) +
+    geom_tile(col = "white", alpha = 0.3, aes(fill = p)) +
+    scale_fill_viridis_c(end = 0.8, direction = -1) +
+    guides(fill = F) +
+    geom_text(aes(label = paste(p, "%"))) +
+    geom_text(l, mapping=aes(x = 0.5, y = 3.5,
+                             label = l),
+              fontface = "bold") +
+    coord_fixed() +
+  coord_cartesian(xlim = c(1, 4),
+                      clip = 'off') +
+  facet_wrap(~RESOURCES, labeller = labeller(RESOURCES = RES.labs)) +
+    theme_classic()
+
+```
+

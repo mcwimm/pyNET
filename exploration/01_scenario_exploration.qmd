@@ -35,8 +35,8 @@ theme_set(theme_bw())
 
 # Load simulation results
 
-- Load simulation results
-- Select the desired scenarios
+-   Load simulation results
+-   Select the desired scenarios
 
 ```{r}
 envs = c(0:2)
@@ -132,7 +132,6 @@ stands %>%
     theme(legend.position = "bottom") +
     labs(fill = "Kruskal-Wallis\nEffect Size")
 ```
-
 
 ## Correlation
 
@@ -246,7 +245,6 @@ stands %>%
     labs(fill = "Kruskal-Wallis\nEffect Size")
 ```
 
-
 ## Correlation
 
 ```{r}
@@ -257,7 +255,6 @@ d1 <- copy(stands %>%
 d1_long = d1 %>% 
     gather(., key, value, out_net) 
 ```
-
 
 ```{r}
 cormat_net = d1 %>% 
@@ -462,8 +459,6 @@ trees %>%
 
 ```
 
-
-
 ## Correlation
 
 ```{r}
@@ -507,8 +502,6 @@ p_cor_tre = cormat_tre %>%
 
 p_cor_tre
 ```
-
-
 
 ```{r}
 trees = add_volume(trees)
@@ -569,7 +562,6 @@ ll = lll %>%
   filter(year == max(year))
 ```
 
-
 ```{r}
 bg <- data.frame(RESOURCES = factor(2))
 
@@ -625,6 +617,10 @@ p +
             mapping = aes(label = l))
 ```
 
+```{r}
+ggsave("top_view.jpg", width = 4.5, height = 4.5, dpi = 400)
+```
+
 ## Speed of root graft formation
 
 ```{r}
@@ -633,7 +629,6 @@ rgf = fread(file = "../data/rgf.txt") %>%
 rg_func = fread(file = "../data/rg_func.txt") %>% 
     mutate(ROOTING = factor(ROOTING))
 ```
-
 
 ```{r}
 dd = rgf %>% 
@@ -647,8 +642,12 @@ dd = rgf %>%
                   mutate(key = "rgf_age_grafted")) %>% 
     group_by(GRAFTING, ROOTING, key) %>% 
     reframe(med = median(value),
+            # min = min(value),
+            # mean = mean(value),
+            # max = max(value),
             q75 = quantile(value, 0.75),
             q25 = quantile(value, 0.25),
+            # q95 = quantile(value, 0.95),
             IQR = q75 - q25) %>% 
     # spread(GRAFTING, rgf_age) %>% 
     # View()
@@ -686,6 +685,10 @@ dd %>%
           axis.text = element_text(size = 11.6))
 ```
 
+```{r}
+ggsave("fig_6.jpg", width = 5, height = 5., dpi = 400)
+```
+
 ## Costs for graft formation and hydraulic redistribution
 
 ```{r}
@@ -700,7 +703,6 @@ df = trees %>% ungroup() %>%
     mutate(p = n() / n_tot * 100) %>% 
     filter(grafted == "grafted") 
 ```
-
 
 ```{r}
 dff = df %>% 
@@ -734,6 +736,10 @@ dff %>%
 ```
 
 ```{r}
+ggsave("fig_7.jpg", width = 5, height = 4.5, dpi = 400)
+```
+
+```{r}
 df %>% 
     filter(grafted == "grafted") %>%
     group_by(stem_group) %>% 
@@ -749,6 +755,7 @@ df %>%
          y = "Water uptake normalized") +
     theme(legend.position = "bottom")
 ```
+
 ```{r}
 df %>% 
     filter(grafted == "grafted") %>% 
@@ -772,8 +779,8 @@ df %>%
     theme(legend.position = "bottom")
 ```
 
-
 # Summary
+
 ## Statistics
 
 ```{r}
@@ -803,7 +810,9 @@ stands %>%
     kbl(caption = "Summary statistics of output variables.") %>%
     kable_styling(full_width = F)
 ```
+
 ## Kruskal-Wallis Effect Size
+
 ```{r}
 kw = bind_rows(kw_str %>% mutate(level = "structure"),
                kw_net %>% mutate(level = "network"),
@@ -838,7 +847,6 @@ ggarrange(p_cor_tre + ggtitle("Tree level"),
           align = "hv",
           labels = c("(a)", "(b)"))
 ```
-
 
 ```{r}
 ggarrange(p_cor_gro + ggtitle("Group level"),

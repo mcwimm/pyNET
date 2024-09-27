@@ -34,6 +34,7 @@ theme_set(theme_bw())
 ```
 
 # Load & prepare data
+
 ## Simulation results
 
 ```{r}
@@ -145,8 +146,6 @@ LM.network$fgraft_all = NULL
 
 ```
 
-
-
 ## Combine data
 
 ```{r}
@@ -167,8 +166,6 @@ struct = stands %>%
                                    "dbh_mean"))) 
 ```
 
-
-
 ```{r}
 nets = stands %>%
     filter(fred != 0) %>% 
@@ -188,7 +185,6 @@ nets = stands %>%
     data.frame(.)
 ```
 
-
 ```{r}
 grps = groups %>%
     gather(., key, value, out_gro) %>% 
@@ -207,7 +203,6 @@ grps = groups %>%
 ```
 
 # Structural variables
-
 
 ```{r eval=F}
 dt_mod_obs = data.frame()
@@ -356,8 +351,6 @@ ggplot() +
 
 ```
 
-
-
 ```{r}
 dt_mod_obs_struct %>% 
     filter(S1 == "OBS") %>% 
@@ -371,7 +364,6 @@ dt_mod_obs_struct %>%
 ```
 
 # Network variables
-
 
 ```{r eval=F}
 dt_mod_obs = data.frame()
@@ -470,8 +462,6 @@ nets %>%
 
 ```
 
-
-
 \*without *gdens*
 
 ```{r}
@@ -488,7 +478,6 @@ dt_mod_obs_netw %>%
 ```
 
 # Group variables
-
 
 ```{r eval=F}
 dt_mod_obs = data.frame()
@@ -609,8 +598,6 @@ grps %>%
 
 ```
 
-
-
 ```{r}
 dt_mod_obs_grps %>% 
     filter(S1 == "OBS") %>% 
@@ -666,3 +653,7 @@ dt_mod_obs %>%
 
 ```
 
+
+```{r}
+ggsave("fig_9.jpg", width = 8, height = 3., dpi = 400)
+```

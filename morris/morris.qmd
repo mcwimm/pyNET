@@ -32,7 +32,6 @@ source("../data_preparation/helpers.R")
 
 ```
 
-
 ```{r}
 out_str = c("no_trees", "dbh_mean", "root_mean")
 out_net = c("fgraft", "no_groups", "gsm", "gsx")
@@ -134,7 +133,6 @@ ggsave("morris_struct.jpg",
 
 ## Network variables
 
-
 ```{r}
 morris_sum %>%
     filter(output_var %in% out_net) %>%
@@ -167,9 +165,7 @@ morris_sum %>%
     theme(legend.position = "bottom")
 ```
 
-
 ```{r eval=F}
 ggsave("morris_netw.jpg",
        width = 6.5, height = 3.5)
 ```
-

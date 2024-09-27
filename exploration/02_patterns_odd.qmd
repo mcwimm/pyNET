@@ -151,19 +151,24 @@ nd_power_law = fread(file = "../data/nd_power_law.txt") %>%
 
 ```{r}
 nd_distribution %>% 
-   group_by(ROOTING, GRAFTING, RESOURCES, k) %>% 
-   mutate(p_k_m = mean(p_k)) %>% 
-   ggplot(., aes(x = k, y = p_k, col = ROOTING)) +
-   geom_line(size = 0.3, alpha = 0.3,
-             aes(group = setup)) +
-   geom_point(aes(y = p_k_m), size = 2) +
-    geom_text(nd_power_law,
-              mapping = aes(x = 7, y = lab.y,
-                            label = signif, col = ROOTING),
-              show.legend = FALSE) +
-   scale_x_continuous(breaks=seq(1, max(nd_distribution$k)+1, 3)) +
-   facet_grid(RESOURCES~GRAFTING, labeller = label_both) +
-   labs(x = "Node degree")
+    group_by(ROOTING, GRAFTING, RESOURCES, k) %>%
+    mutate(p_k_m = mean(p_k)) %>% #View()
+    ggplot(., aes(x = k, y = p_k, col = ROOTING)) +
+    geom_line(size = 0.3, alpha = 0.3, aes(group = setup)) +
+    geom_point(aes(y = p_k_m), size = 2) +
+    geom_text(
+        nd_power_law,
+        mapping = aes(
+            x = 7,
+            y = lab.y,
+            label = signif,
+            col = ROOTING
+        ),
+        show.legend = FALSE
+    ) +
+    scale_x_continuous(breaks = seq(1, max(nd_distribution$k) + 1, 3)) +
+    facet_grid(RESOURCES ~ GRAFTING, labeller = label_both) +
+    labs(x = "Node degree")
 ```
 
 ```{r}
@@ -180,26 +185,158 @@ nd_power_law %>%
 stands %>% 
     filter(fred != 0) %>% 
     gather(., key, value, fred_all, fred) %>% 
-    ggplot(., aes(x = ROOTING, fill = GRAFTING, alpha = RESOURCES, y = value)) +
+    ggplot(., aes(x = ROOTING, fill = GRAFTING,
+                  alpha = RESOURCES, y = value)) +
     geom_hline(yintercept = 50, col = "grey") +
     geom_boxplot() +
     guides(alpha = guide_legend(override.aes = aes(fill = "grey"))) +
     facet_wrap(~key, ncol = 1)
 ```
 
+- Percentage of scenarios with fred > 50 %
+
 ```{r}
-stands %>% 
-    group_by(setup) %>% 
-    reframe(fred = mean(fred)) %>% 
-    mutate(no_scen = n()) %>% 
-    filter(fred != 0) %>% 
-    mutate(no_scen_m2 = n()) %>% 
-    filter(fred > 50) %>% 
-    reframe(no_scen, no_scen_m2, no_scen_nf = n()) %>% distinct(.) %>% 
-    mutate(p_tot = no_scen_nf/no_scen*100,
-           p_nr_g3 = no_scen_nf/no_scen_m2*100,
-           p_g3 = (no_scen-no_scen_m2)/no_scen*100)
+bind_rows(
+    stands %>%
+        group_by(ROOTING, GRAFTING, RESOURCES) %>%
+        reframe(fred = mean(fred)) %>%
+        ungroup() %>%
+        mutate(no_scen = n()) %>%
+        filter(fred > 50) %>%
+        reframe(p_sce_fred = n() / no_scen * 100) %>%
+        distinct() %>% mutate(groups = "> 2 trees"),
+    stands %>%
+        group_by(ROOTING, GRAFTING, RESOURCES) %>%
+        reframe(fred = mean(fred_all)) %>%
+        ungroup() %>%
+        mutate(no_scen = n()) %>%
+        filter(fred > 50) %>%
+        reframe(p_sce_fred = n() / no_scen * 100) %>%
+        distinct()%>% mutate(groups = "all")
+)
+
 ```
+# Simultainous occurrence
+
+```{r}
+
+matches = bind_rows(
+    p1p3_spearman %>%
+        mutate(
+            match = case_when(
+                pattern %in% c("P1", "P3") & rxy < 0 ~ "match",
+                pattern %in% c("P2") & rxy > 0 ~ "match",
+                .default = "fail"
+            )
+        ) %>%
+        select(GRAFTING:RESOURCES, pattern, match),
+    nd_power_law %>%
+        mutate(
+            match = ifelse(signif == "*", "match", "match_ns"),
+            pattern = "P4"
+        ) %>%
+        select(GRAFTING, ROOTING, RESOURCES, pattern, match),
+    stands %>%
+        group_by(ROOTING, GRAFTING, RESOURCES) %>%
+        reframe(fred = mean(fred_all)) %>%
+        mutate(
+            match = ifelse(fred > 50, "match", "fail"),
+            pattern = "P5"
+        ) %>%
+        select(GRAFTING, ROOTING, RESOURCES, pattern, match)
+) 
+
+matches = matches %>%
+    spread(., pattern, match) %>%
+    unite("allP", P1:P5, remove = F) %>%
+    unite("notP3", P1, P2, P4, P5, remove = F) %>%
+    mutate(
+        match_sig = ifelse(str_detect(allP, "fail") |
+            str_detect(allP, "ns"),
+        "fail",
+        "match"),
+        match_all = ifelse(str_detect(allP, "fail"),
+        "fail",
+        "match"),
+        match_all_but_P3 = ifelse(str_detect(notP3, "fail"),
+        "fail",
+        "match")
+        )
+```
+- All Patterns
+
+```{r}
+matches %>%
+    gather(., key, value, match_all, match_sig, 
+           match_all_but_P3) %>% 
+    group_by(key, value) %>% 
+    reframe(n = n()) %>% 
+    spread(., value, n) %>% 
+    mutate(tot = fail + match)
+```
+
+- Only Pattern P3
+
+```{r}
+matches %>% 
+    group_by(P3) %>% 
+    reframe(n())
+```
+
+
+```{r}
+matches %>% 
+    gather(., key, value, P1:P5) %>% 
+    mutate(value = factor(value,
+                          levels = c("match", "match_ns",
+                                     "fail"),
+                          labels = c("succeed", 
+                                     "succeed but P4 \nnon-significant",
+                                     "fail"))) %>% 
+    ggplot(., aes(y = GRAFTING,
+                  x = key,
+                  fill = value)) +
+    geom_tile(col = "darkgrey", alpha = 0.5) +
+    coord_fixed() +
+    scale_fill_viridis_d(end = 0.8, direction = -1) +
+    facet_grid(ROOTING~RESOURCES, labeller = label_both) +
+    labs(x = "Pattern",
+         fill = "Reproduction") +
+    theme_classic()
+ggsave("pattern_matched_2.jpg", width = 6, height = 4)
+```
+
+
+```{r}
+RES.labs <- c("RESOURCES 0:\nfixed", 
+              "RESOURCES 1:\nvariable", 
+              "RESOURCES 2:\nseasonal & variable")
+names(RES.labs) <- c("0", "1", "2")
+
+matches %>%
+    mutate(counts = str_count(allP, "match"),
+           counts_ns = counts - str_count(allP, "ns"),
+           lab = ifelse(counts != counts_ns, 
+                        paste(counts, "*"),
+                        counts)) %>%
+    # filter(counts != counts_ns) %>% 
+    # View()
+    ggplot(., aes(x = GRAFTING, y = ROOTING, fill = counts)) +
+    geom_tile(col = "white", alpha = 0.3) +
+    scale_fill_viridis_c(end = 0.8, direction = -1) +
+    geom_text(aes(label = lab)) +
+    guides(fill = F) +
+    coord_fixed() +
+    facet_wrap( ~ RESOURCES, 
+                labeller = labeller(RESOURCES = RES.labs)) +
+    theme_classic()
+
+
+```
+```{r}
+ggsave("patterns_matched.jpg", width = 8, height = 3., dpi = 400)
+```
+
 
 # Summary
 
@@ -278,3 +415,8 @@ ggarrange(fig_p1, fig_p2, fig_p3, fig_p4, fig_p5,
           labels = c("(a)", "(b)", "(c)", "(d)", "(e)"))
 
 ```
+
+```{r}
+ggsave("fig_8.jpg", width = 9, height = 5.5, dpi = 400)
+```
+

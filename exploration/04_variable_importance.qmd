@@ -68,7 +68,6 @@ rename.axis = function(p){
 }
 ```
 
-
 # Summary
 
 ```{r}
@@ -100,5 +99,9 @@ ggarrange(tr_p + scale_y_discrete(),
           labels = c("(a)", "(b)", "(c)"),
           align = "hv")
 
+```
+
+```{r}
+ggsave("fig_10.jpg", dpi = 400, height = 5, width = 10)
 ```
 

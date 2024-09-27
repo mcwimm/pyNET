@@ -9,7 +9,7 @@ outs = c("gs", "nlinks", "shape")
 # Prepare data ----
 # i.e., combine group variables in one table
 # Create dataframe with all grafted trees based on links table
-links_50 = fread(file = "../data/links_50.txt") 
+links_50 = fread(file = "../../../data/links_50.txt") 
 
 ll1 = links_50 %>% 
     select(ID1, year, groupID:shape, dist,
@@ -49,12 +49,12 @@ links = bind_rows(ll1, ll2)
 # 
 # fwrite(ggg, file = "../data_preparation/VAR_IMP/GROUP/groups_ext.txt")
 
-ggg = fread(file = "../data_preparation/VAR_IMP/GROUP/groups_ext.txt")
+ggg = fread(file = "../../../data_preparation/VAR_IMP/GROUP/groups_ext.txt")
 
 # Run random forest models for all output variables ----
 for (out in outs){
     print(out)
-    # Load train and test data
+    # Create train and test data
     group_data = ggg %>% 
         select(dbh_m:dist_x, GRAFTING, all_of(out)) %>% 
         rename("y" = out)
@@ -64,10 +64,12 @@ for (out in outs){
     data_train <- group_data[train_test_split,]
     data_test  <- setdiff(group_data, data_train)
     
-    saveRDS(data_train, file = paste("../data_preparation/VAR_IMP/GROUP/", "data_train_", out, ".rds", sep = ""))
-    saveRDS(data_test, file = paste("../data_preparation/VAR_IMP/GROUP/", "data_test_", out, ".rds", sep = ""))
+    saveRDS(data_train, file = paste("../../../data_preparation/VAR_IMP/GROUP/", 
+                                     "data_train_", out, ".rds", sep = ""))
+    saveRDS(data_test, file = paste("../../../data_preparation/VAR_IMP/GROUP/",
+                                    "data_test_", out, ".rds", sep = ""))
     
-    # rf
+    # random forest
     set.seed(123)
     rf <- randomForest(y ~ ., data = data_train, importance = T)
     
@@ -75,16 +77,20 @@ for (out in outs){
     set.seed(123)
     vi <- vivi(data = data_train, fit = rf, response = 'y', normalized = T)
     
-    saveRDS(rf, file = paste("../data_preparation/VAR_IMP/GROUP/rf_", out, ".rds", sep = ""))
-    saveRDS(vi, file = paste("../data_preparation/VAR_IMP/GROUP/vi_", out, ".rds", sep = ""))
+    saveRDS(rf, file = paste("../../../data_preparation/VAR_IMP/GROUP/rf_", 
+                             out, ".rds", sep = ""))
+    saveRDS(vi, file = paste("../../../data_preparation/VAR_IMP/GROUP/vi_",
+                             out, ".rds", sep = ""))
 }
 
 
 # Plot variable importance maps ----
 i = 1
 for (out in outs){
-    rf = readRDS(file = paste("../data_preparation/VAR_IMP/GROUP/rf_", out, ".rds", sep = ""))
-    vi = readRDS(file = paste("../data_preparation/VAR_IMP/GROUP/vi_", out, ".rds", sep = ""))
+    rf = readRDS(file = paste("../../../data_preparation/VAR_IMP/GROUP/rf_", 
+                              out, ".rds", sep = ""))
+    vi = readRDS(file = paste("../../../data_preparation/VAR_IMP/GROUP/vi_",
+                              out, ".rds", sep = ""))
     rsq = round(100 * rf$rsq[length(rf$rsq)], digits = 2)
     t = data.frame(V1 = diag(vi)) %>% 
         mutate(r = rank(-V1),
@@ -97,7 +103,7 @@ for (out in outs){
         geom_tile(t, mapping=aes(size = -r), col = "black", fill = NA, show.legend = F) +
         scale_size_continuous(range = c(0.1, 1)) 
     # p
-    saveRDS(p, file = paste("../data_preparation/VAR_IMP/GROUP/viviHeatmap_", out, ".rds", sep = ""))
+    saveRDS(p, file = paste("../../../data_preparation/VAR_IMP/GROUP/viviHeatmap_", out, ".rds", sep = ""))
     
     nam <- paste("p", i, sep = "")
     assign(nam, p)
